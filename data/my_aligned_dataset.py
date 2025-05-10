@@ -113,8 +113,26 @@ class MyAlignedDataset(BaseDataset):
         A_path = self.A_paths[index]
         B_path = self.B_paths[index]
         
-        A = Image.open(A_path).convert('RGB')
-        B = Image.open(B_path).convert('RGB')
+        A_img = Image.open(A_path)
+        B_img = Image.open(B_path)
+        
+        # Check if B has transparency
+        has_transparency = B_img.mode == 'RGBA'
+        
+        if has_transparency:
+            # For image B with transparency, create a white background and paste B onto it
+            B_white_bg = Image.new('RGB', B_img.size, (255, 255, 255))
+            B_white_bg.paste(B_img, mask=B_img.split()[3])
+            B = B_white_bg
+            
+            # For image A, create a white background and paste A with B's alpha channel as mask
+            A_white_bg = Image.new('RGB', A_img.size, (255, 255, 255))
+            A_white_bg.paste(A_img, mask=B_img.split()[3])
+            A = A_white_bg
+        else:
+            # If no transparency, convert to RGB as before
+            A = A_img.convert('RGB')
+            B = B_img.convert('RGB')
 
         # Apply the same transform to both A and B
         transform_params = get_params(self.opt, A.size)
