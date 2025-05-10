@@ -10,7 +10,7 @@ from PIL import Image
 import os
 
 IMG_EXTENSIONS = [
-    '.jpg', '.JPG', '.jpeg', '.JPEG',
+    '.jpg', '.JPG', '.jpeg', '.JPEG', ".webp",
     '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP',
     '.tif', '.TIF', '.tiff', '.TIFF',
 ]
@@ -20,15 +20,27 @@ def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
 
-def make_dataset(dir, max_dataset_size=float("inf")):
+def make_dataset(dir, max_dataset_size=float("inf"), recursive=False):
     images = []
     assert os.path.isdir(dir), '%s is not a valid directory' % dir
 
-    for root, _, fnames in sorted(os.walk(dir)):
-        for fname in fnames:
-            if is_image_file(fname):
-                path = os.path.join(root, fname)
-                images.append(path)
+    if recursive:
+        # Walk through all subdirectories recursively
+        for root, _, fnames in sorted(os.walk(dir)):
+            for fname in fnames:
+                if is_image_file(fname):
+                    path = os.path.join(root, fname)
+                    images.append(path)
+    else:
+        # Original behavior: only look at the top level directory
+        for root, _, fnames in sorted(os.walk(dir)):
+            if root != dir:  # Skip subdirectories
+                continue
+            for fname in fnames:
+                if is_image_file(fname):
+                    path = os.path.join(root, fname)
+                    images.append(path)
+    
     return images[:min(max_dataset_size, len(images))]
 
 
@@ -39,8 +51,8 @@ def default_loader(path):
 class ImageFolder(data.Dataset):
 
     def __init__(self, root, transform=None, return_paths=False,
-                 loader=default_loader):
-        imgs = make_dataset(root)
+                 loader=default_loader, recursive=False):
+        imgs = make_dataset(root, recursive=recursive)
         if len(imgs) == 0:
             raise(RuntimeError("Found 0 images in: " + root + "\n"
                                "Supported image extensions are: " + ",".join(IMG_EXTENSIONS)))
