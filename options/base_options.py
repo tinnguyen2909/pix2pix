@@ -49,6 +49,14 @@ class BaseOptions():
         parser.add_argument('--preprocess', type=str, default='resize_and_crop', help='scaling and cropping of images at load time [resize_and_crop | crop | scale_width | scale_width_and_crop | none]')
         parser.add_argument('--no_flip', action='store_true', help='if specified, do not flip the images for data augmentation')
         parser.add_argument('--display_winsize', type=int, default=256, help='display window size for both visdom and HTML')
+        parser.add_argument('--shuffle_dataset', action='store_true', help='if specified, shuffle the dataset pairs')
+        # augmentation parameters
+        parser.add_argument('--use_augmentation', action='store_true', help='if specified, apply random scaling and rotation to images')
+        parser.add_argument('--scale_min', type=float, default=0.5, help='minimum scaling factor for augmentation')
+        parser.add_argument('--scale_max', type=float, default=0.9, help='maximum scaling factor for augmentation')
+        parser.add_argument('--rotate_min', type=int, default=-45, help='minimum rotation angle in degrees for augmentation')
+        parser.add_argument('--rotate_max', type=int, default=45, help='maximum rotation angle in degrees for augmentation')
+        parser.add_argument('--augmentation_regex', type=str, default='.*', help='regex pattern to match filenames in path_A for applying augmentation')
         # additional parameters
         parser.add_argument('--epoch', type=str, default='latest', help='which epoch to load? set to latest to use latest cached model')
         parser.add_argument('--load_iter', type=int, default='0', help='which iteration to load? if load_iter > 0, the code will load models by iter_[load_iter]; otherwise, the code will load models by [epoch]')
@@ -57,6 +65,8 @@ class BaseOptions():
         # wandb parameters
         parser.add_argument('--use_wandb', action='store_true', help='if specified, then init wandb logging')
         parser.add_argument('--wandb_project_name', type=str, default='CycleGAN-and-pix2pix', help='specify wandb project name')
+        parser.add_argument('--path_A', type=str, required=True, help='path to directory containing domain A images (comma-separated for multiple directories)')
+        parser.add_argument('--path_B', type=str, required=True, help='path to directory containing domain B images (comma-separated for multiple directories)')
         self.initialized = True
         return parser
 

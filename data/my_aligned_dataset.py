@@ -27,10 +27,12 @@ class MyAlignedDataset(BaseDataset):
             raise ValueError("Both path_A and path_B must be provided when using my_aligned dataset mode")
         
         # Parse comma-separated paths
-        self.dirs_A = [os.path.join(p.strip(), opt.phase) if os.path.isdir(os.path.join(p.strip(), opt.phase))
-                     else p.strip() for p in opt.path_A.split(',')]
-        self.dirs_B = [os.path.join(p.strip(), opt.phase) if os.path.isdir(os.path.join(p.strip(), opt.phase))
-                     else p.strip() for p in opt.path_B.split(',')]
+        # self.dirs_A = [os.path.join(p.strip(), opt.phase) if os.path.isdir(os.path.join(p.strip(), opt.phase))
+        #              else p.strip() for p in opt.path_A.split(',')]
+        # self.dirs_B = [os.path.join(p.strip(), opt.phase) if os.path.isdir(os.path.join(p.strip(), opt.phase))
+        #              else p.strip() for p in opt.path_B.split(',')]
+        self.dirs_A = [p.strip() for p in opt.path_A.split(',')]
+        self.dirs_B = [p.strip() for p in opt.path_B.split(',')]
         
         # Ensure equal number of directories
         if len(self.dirs_A) != len(self.dirs_B):
@@ -92,6 +94,20 @@ class MyAlignedDataset(BaseDataset):
             raise ValueError("No matching image pairs found across any directory pairs!")
             
         print(f"Total: Created {total_pairs} matching A-B image pairs from all directory pairs")
+        
+        # Shuffle dataset if option is enabled
+        if hasattr(self.opt, 'shuffle_dataset') and self.opt.shuffle_dataset:
+            import random
+            print("Shuffling dataset pairs...")
+            # Create pairs for shuffling
+            paired_paths = list(zip(self.A_paths, self.B_paths))
+            # Shuffle in place
+            random.shuffle(paired_paths)
+            # Unzip back to separate lists
+            self.A_paths, self.B_paths = zip(*paired_paths)
+            # Convert back to lists
+            self.A_paths, self.B_paths = list(self.A_paths), list(self.B_paths)
+            print("Dataset shuffled.")
             
         assert(self.opt.load_size >= self.opt.crop_size)   # crop_size should be smaller than the size of loaded image
         self.input_nc = self.opt.output_nc if self.opt.direction == 'BtoA' else self.opt.input_nc
@@ -134,6 +150,33 @@ class MyAlignedDataset(BaseDataset):
             A = A_img.convert('RGB')
             B = B_img.convert('RGB')
 
+        # Apply scaling and rotation if augmentation is enabled
+        if hasattr(self.opt, 'use_augmentation') and self.opt.use_augmentation:
+            import random
+            import math
+            import re
+            
+            # Extract basename from A_path for regex matching
+            basename = os.path.basename(A_path)
+            
+            # Apply augmentation only if the A_path matches the regex pattern
+            if hasattr(self.opt, 'augmentation_regex') and re.search(self.opt.augmentation_regex, basename):
+                # Apply same random transformations to both images
+                scale = random.uniform(self.opt.scale_min, self.opt.scale_max)
+                rotate_angle = random.uniform(self.opt.rotate_min, self.opt.rotate_max)
+                
+                # Calculate new size after scaling
+                new_width = int(A.width * scale)
+                new_height = int(A.height * scale)
+                
+                # Resize both images with the same scale
+                A = A.resize((new_width, new_height), Image.BICUBIC)
+                B = B.resize((new_width, new_height), Image.BICUBIC)
+                
+                # Rotate both images with the same angle
+                A = A.rotate(rotate_angle, Image.BICUBIC, expand=True)
+                B = B.rotate(rotate_angle, Image.BICUBIC, expand=True)
+
         # Apply the same transform to both A and B
         transform_params = get_params(self.opt, A.size)
         A_transform = get_transform(self.opt, transform_params, grayscale=(self.input_nc == 1))
@@ -148,17 +191,17 @@ class MyAlignedDataset(BaseDataset):
         """Return the total number of images in the dataset."""
         return len(self.A_paths)
 
-    @staticmethod
-    def modify_commandline_options(parser, is_train):
-        """Add new dataset-specific options, and rewrite default values for existing options.
+    # @staticmethod
+    # def modify_commandline_options(parser, is_train):
+    #     """Add new dataset-specific options, and rewrite default values for existing options.
 
-        Parameters:
-            parser          -- original option parser
-            is_train (bool) -- whether training phase or test phase. You can use this flag to add training-specific or test-specific options.
+    #     Parameters:
+    #         parser          -- original option parser
+    #         is_train (bool) -- whether training phase or test phase. You can use this flag to add training-specific or test-specific options.
 
-        Returns:
-            the modified parser.
-        """
-        parser.add_argument('--path_A', type=str, required=True, help='path to directory containing domain A images (comma-separated for multiple directories)')
-        parser.add_argument('--path_B', type=str, required=True, help='path to directory containing domain B images (comma-separated for multiple directories)')
-        return parser
+    #     Returns:
+    #         the modified parser.
+    #     """
+    #     parser.add_argument('--path_A', type=str, required=True, help='path to directory containing domain A images (comma-separated for multiple directories)')
+    #     parser.add_argument('--path_B', type=str, required=True, help='path to directory containing domain B images (comma-separated for multiple directories)')
+    #     return parser
