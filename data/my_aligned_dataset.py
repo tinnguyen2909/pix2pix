@@ -160,22 +160,23 @@ class MyAlignedDataset(BaseDataset):
             basename = os.path.basename(A_path)
             
             # Apply augmentation only if the A_path matches the regex pattern
-            if hasattr(self.opt, 'augmentation_regex') and re.search(self.opt.augmentation_regex, basename):
-                # Apply same random transformations to both images
-                scale = random.uniform(self.opt.scale_min, self.opt.scale_max)
-                rotate_angle = random.uniform(self.opt.rotate_min, self.opt.rotate_max)
-                
-                # Calculate new size after scaling
-                new_width = int(A.width * scale)
-                new_height = int(A.height * scale)
-                
-                # Resize both images with the same scale
-                A = A.resize((new_width, new_height), Image.BICUBIC)
-                B = B.resize((new_width, new_height), Image.BICUBIC)
-                
-                # Rotate both images with the same angle
-                A = A.rotate(rotate_angle, Image.BICUBIC, expand=True)
-                B = B.rotate(rotate_angle, Image.BICUBIC, expand=True)
+            if hasattr(self.opt, 'augmentation_regex') and re.search(self.opt.augmentation_regex, A_path):
+                if random.random() < 0.5:
+                    # Apply same random transformations to both images
+                    scale = random.uniform(self.opt.scale_min, self.opt.scale_max)
+                    rotate_angle = random.uniform(self.opt.rotate_min, self.opt.rotate_max)
+                    
+                    # Calculate new size after scaling
+                    new_width = int(A.width * scale)
+                    new_height = int(A.height * scale)
+                    
+                    # Resize both images with the same scale
+                    A = A.resize((new_width, new_height), Image.BICUBIC)
+                    B = B.resize((new_width, new_height), Image.BICUBIC)
+                    
+                    # Rotate both images with the same angle
+                    A = A.rotate(rotate_angle, Image.BICUBIC, expand=True)
+                    B = B.rotate(rotate_angle, Image.BICUBIC, expand=True)
 
         # Apply the same transform to both A and B
         transform_params = get_params(self.opt, A.size)
