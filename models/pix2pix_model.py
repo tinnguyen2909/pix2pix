@@ -38,6 +38,7 @@ class Pix2PixModel(BaseModel):
             parser.add_argument('--lambda_lpips', type=float, default=5.0, help='weight for LPIPS loss between fake_B and real_B')
             parser.add_argument('--lambda_lpips_A', type=float, default=0.0, help='weight for LPIPS loss between real_A and fake_B')
             parser.add_argument('--lambda_l2', type=float, default=1.0, help='weight for L2 loss')
+            parser.add_argument('--lambda_gan', type=float, default=1.0, help='weight for GAN loss')
         
         # Add attention-related parameters
         parser.add_argument('--use_attention', action='store_true', help='use attention in the UnetGenerator innermost layer')
@@ -76,7 +77,8 @@ class Pix2PixModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
             self.criterionL1 = torch.nn.L1Loss()
             self.criterionL2 = torch.nn.MSELoss()
-            self.criterionLPIPS = lpips.LPIPS(net='vgg').to(self.device)
+            # self.criterionLPIPS = lpips.LPIPS(net='vgg').to(self.device)
+            self.criterionLPIPS = lpips.LPIPS(net='squeeze').to(self.device)
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -119,7 +121,7 @@ class Pix2PixModel(BaseModel):
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((self.real_A, self.fake_B), 1)
         pred_fake = self.netD(fake_AB)
-        self.loss_G_GAN = self.criterionGAN(pred_fake, True)
+        self.loss_G_GAN = self.criterionGAN(pred_fake, True) * self.opt.lambda_gan
         # Second, G(A) = B
         self.loss_G_L1 = self.criterionL1(self.fake_B, self.real_B) * self.opt.lambda_L1
         # L2 loss
