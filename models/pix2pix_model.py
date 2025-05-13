@@ -2,6 +2,7 @@ import torch
 import lpips
 from .base_model import BaseModel
 from . import networks
+import os
 
 
 class Pix2PixModel(BaseModel):
@@ -37,6 +38,10 @@ class Pix2PixModel(BaseModel):
             parser.add_argument('--lambda_lpips', type=float, default=5.0, help='weight for LPIPS loss between fake_B and real_B')
             parser.add_argument('--lambda_lpips_A', type=float, default=0.0, help='weight for LPIPS loss between real_A and fake_B')
             parser.add_argument('--lambda_l2', type=float, default=1.0, help='weight for L2 loss')
+        
+        # Add attention-related parameters
+        parser.add_argument('--use_attention', action='store_true', help='use attention in the UnetGenerator innermost layer')
+        parser.add_argument('--attention_heads', type=int, default=8, help='number of attention heads for MultiheadAttentionBlock')
 
         return parser
 
@@ -58,7 +63,9 @@ class Pix2PixModel(BaseModel):
             self.model_names = ['G']
         # define networks (both generator and discriminator)
         self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
-                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+                                      not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids,
+                                      use_attention=opt.use_attention, 
+                                      attention_heads=opt.attention_heads)
 
         if self.isTrain:  # define a discriminator; conditional GANs need to take both input and output images; Therefore, #channels for D is input_nc + output_nc
             self.netD = networks.define_D(opt.input_nc + opt.output_nc, opt.ndf, opt.netD,
@@ -137,3 +144,66 @@ class Pix2PixModel(BaseModel):
         self.optimizer_G.zero_grad()        # set G's gradients to zero
         self.backward_G()                   # calculate graidents for G
         self.optimizer_G.step()             # update G's weights
+
+    # def load_networks(self, epoch):
+    #     """Load all the networks from the disk, with backward compatibility for models without attention.
+        
+    #     Parameters:
+    #         epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
+    #     """
+    #     for name in self.model_names:
+    #         if isinstance(name, str):
+    #             load_filename = '%s_net_%s.pth' % (epoch, name)
+    #             load_path = os.path.join(self.save_dir, load_filename)
+    #             net = getattr(self, 'net' + name)
+    #             if isinstance(net, torch.nn.DataParallel):
+    #                 net = net.module
+    #             print('loading the model from %s' % load_path)
+    #             # if you are using PyTorch newer than 0.4 (e.g., built from
+    #             # GitHub source), you can remove str() on self.device
+    #             try:
+    #                 state_dict = torch.load(load_path, map_location=str(self.device))
+    #                 if hasattr(state_dict, '_metadata'):
+    #                     del state_dict._metadata
+                    
+    #                 # Special handling for backward compatibility with models without attention
+    #                 if name == 'G' and hasattr(net, 'use_attention') and net.use_attention:
+    #                     # If current model uses attention but loaded model doesn't have attention layers
+    #                     missing_keys = []
+    #                     for k in net.state_dict().keys():
+    #                         if 'attention' in k and k not in state_dict:
+    #                             missing_keys.append(k)
+                        
+    #                     if missing_keys:
+    #                         print("Detected missing attention keys in checkpoint. Initializing attention layers.")
+    #                         # Initialize the model with the state dict, ignoring missing keys
+    #                         for key in list(state_dict.keys()):
+    #                             self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
+                            
+    #                         # Load what we can
+    #                         net.load_state_dict(state_dict, strict=False)
+    #                         return
+                    
+    #                 # patch InstanceNorm checkpoints prior to 0.4
+    #                 for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
+    #                     self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
+                    
+    #                 net.load_state_dict(state_dict)
+    #             except Exception as e:
+    #                 import traceback
+    #                 traceback.print_exc()
+    #                 continue
+
+    # def __patch_instance_norm_state_dict(self, state_dict, module, keys, i=0):
+    #     """Fix InstanceNorm checkpoints incompatibility (prior to 0.4)"""
+    #     key = keys[i]
+    #     if i + 1 == len(keys):  # at the end, pointing to a parameter/buffer
+    #         if module.__class__.__name__.startswith('InstanceNorm') and \
+    #                 (key == 'running_mean' or key == 'running_var'):
+    #             if getattr(module, key) is None:
+    #                 state_dict.pop('.'.join(keys))
+    #         if module.__class__.__name__.startswith('InstanceNorm') and \
+    #            (key == 'num_batches_tracked'):
+    #             state_dict.pop('.'.join(keys))
+    #     else:
+    #         self.__patch_instance_norm_state_dict(state_dict, getattr(module, key), keys, i + 1)
