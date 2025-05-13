@@ -3,11 +3,98 @@ import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
-
+import torch.nn.functional as F
+from xformers.ops import memory_efficient_attention
 
 ###############################################################################
 # Helper Functions
 ###############################################################################
+
+
+class MultiheadAttentionBlock(nn.Module):
+    def __init__(self, embed_dim, num_heads, dropout=0.0):
+        """
+        Initialize a Multihead Attention Block using xformers memory_efficient_attention
+        
+        Args:
+            embed_dim (int): Embedding dimension (C)
+            num_heads (int): Number of attention heads
+            dropout (float): Dropout probability
+        """
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        assert self.head_dim * num_heads == embed_dim, "embed_dim must be divisible by num_heads"
+        
+        # Linear projections for query, key, value
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x):
+        """
+        Forward pass for multihead attention block with residual connection and layer normalization
+        
+        Args:
+            x (Tensor): Input tensor with shape (B, C, H, W)
+            
+        Returns:
+            Tensor: Output tensor with same shape as input (B, C, H, W)
+        """
+        batch_size, channels, height, width = x.shape
+        
+        # Store input for residual connection
+        residual = x
+        
+        # Reshape input: (B, C, H, W) -> (B, H*W, C)
+        x_flat = x.permute(0, 2, 3, 1).reshape(batch_size, height * width, channels)
+        
+        # Apply pre-LayerNorm
+        normalized = self.norm1(x_flat)
+        
+        # Project to queries, keys, values
+        q = self.q_proj(normalized)  # (B, H*W, C)
+        k = self.k_proj(normalized)  # (B, H*W, C)
+        v = self.v_proj(normalized)  # (B, H*W, C)
+        
+        # Reshape for multihead attention: (B, H*W, C) -> (B, H*W, num_heads, head_dim)
+        q = q.view(batch_size, height * width, self.num_heads, self.head_dim)
+        k = k.view(batch_size, height * width, self.num_heads, self.head_dim)
+        v = v.view(batch_size, height * width, self.num_heads, self.head_dim)
+        
+        # Compute attention
+        attn_output = memory_efficient_attention(
+            q.transpose(1, 2),  # (B, num_heads, H*W, head_dim)
+            k.transpose(1, 2),  # (B, num_heads, H*W, head_dim)
+            v.transpose(1, 2),  # (B, num_heads, H*W, head_dim)
+        )  # (B, num_heads, H*W, head_dim)
+        
+        # Reshape back: (B, num_heads, H*W, head_dim) -> (B, H*W, C)
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, height * width, channels)
+        
+        # Apply output projection
+        output = self.out_proj(attn_output)  # (B, H*W, C)
+        output = self.dropout(output)
+        
+        # Add residual connection (Pre-LayerNorm architecture)
+        output = output + x_flat
+        
+        # Apply second LayerNorm
+        output = self.norm2(output)
+        
+        # Reshape back to original shape: (B, H*W, C) -> (B, C, H, W)
+        output = output.view(batch_size, height, width, channels).permute(0, 3, 1, 2)
+        
+        return output
+
 
 
 class Identity(nn.Module):
