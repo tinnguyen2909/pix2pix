@@ -19,9 +19,11 @@ See training and test tips at: https://github.com/junyanz/pytorch-CycleGAN-and-p
 See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/docs/qa.md
 """
 import time
+import torch
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
+from models.networks import MultiheadAttentionBlock
 from util.visualizer import Visualizer
 
 if __name__ == '__main__':
@@ -30,8 +32,138 @@ if __name__ == '__main__':
     dataset_size = len(dataset)    # get the number of images in the dataset.
     print('The number of training images = %d' % dataset_size)
 
-    model = create_model(opt)      # create a model given opt.model and other options
-    model.setup(opt)               # regular setup: load and print networks; create schedulers
+    # Handle loading checkpoints trained without attention
+    if opt.continue_train and opt.checkpoint_no_attention and opt.use_attention:
+        print('Loading checkpoint trained without attention, then enabling attention...')
+        
+        # Temporarily disable attention to properly load the checkpoint
+        opt_no_attn = TrainOptions().parse()  # Create a fresh copy of the options
+        # Copy all attributes from opt to opt_no_attn
+        for key, value in vars(opt).items():
+            setattr(opt_no_attn, key, value)
+        opt_no_attn.use_attention = False
+        
+        # Create model without attention and load checkpoint
+        model = create_model(opt_no_attn)
+        model.setup(opt_no_attn)
+        print(f"Created model with use_attention = {opt_no_attn.use_attention}")
+        
+        # Now insert attention directly into the innermost layer
+        def find_innermost_block(model):
+            """Find the innermost UnetSkipConnectionBlock in a nested structure"""
+            def _find_recursively(module):
+                # Check if this module is the innermost UnetSkipConnectionBlock
+                if hasattr(module, 'innermost') and module.innermost:
+                    return module
+                
+                # Check all children modules
+                if hasattr(module, 'model'):
+                    # If model is a Sequential, check each child
+                    if isinstance(module.model, torch.nn.Sequential):
+                        for child in module.model:
+                            result = _find_recursively(child)
+                            if result is not None:
+                                return result
+                    # If model is another module, check it recursively
+                    else:
+                        return _find_recursively(module.model)
+                return None
+            
+            return _find_recursively(model)
+        
+        # Get the generator network
+        netG = model.netG
+        if isinstance(netG, torch.nn.DataParallel):
+            netG = netG.module
+        
+        # Find the innermost block
+        innermost = find_innermost_block(netG)
+        
+        if innermost is not None and hasattr(innermost, 'model') and isinstance(innermost.model, torch.nn.Sequential):
+            print(f"Found innermost block, inserting attention")
+            
+            # Get the current innermost sequential model
+            innermost_seq = innermost.model
+            
+            # Print the current innermost structure
+            print(f"Current innermost structure: {[type(m).__name__ for m in innermost_seq]}")
+            
+            # Look for ReLU and ConvTranspose2d in the upsampling part
+            # Typical structure: [LeakyReLU, Conv2d, ReLU, ConvTranspose2d, BatchNorm2d]
+            up_relu_idx = None
+            up_conv_idx = None
+            
+            for i, module in enumerate(innermost_seq):
+                if i > 1 and isinstance(module, torch.nn.ReLU):  # Skip first modules (downsampling)
+                    up_relu_idx = i
+                if i > 2 and isinstance(module, torch.nn.ConvTranspose2d):  # After ReLU
+                    up_conv_idx = i
+                    break
+            
+            if up_relu_idx is not None and up_conv_idx is not None:
+                print(f"Found upsampling ReLU at index {up_relu_idx} and ConvTranspose2d at index {up_conv_idx}")
+                
+                # Create new sequential with attention inserted between ReLU and ConvTranspose2d
+                new_seq = torch.nn.Sequential()
+                
+                # Add all modules up to and including ReLU
+                for i in range(up_relu_idx + 1):
+                    new_seq.add_module(str(i), innermost_seq[i])
+                
+                # Create and add the attention module (using the same number of channels as ConvTranspose2d input)
+                conv_transpose = innermost_seq[up_conv_idx]
+                if hasattr(conv_transpose, 'in_channels'):
+                    channels = conv_transpose.in_channels
+                    attention_heads = opt.attention_heads if hasattr(opt, 'attention_heads') else 8
+                    attention = MultiheadAttentionBlock(
+                        embed_dim=channels, 
+                        num_heads=attention_heads,
+                        dropout=0.0
+                    )
+                    
+                    # Move the attention module to the same device as the model
+                    device = next(innermost_seq.parameters()).device
+                    attention = attention.to(device)
+                    
+                    print(f"Adding attention with {channels} channels and {attention_heads} heads on {device}")
+                    new_seq.add_module(str(up_relu_idx + 1), attention)
+                
+                # Add remaining modules (ConvTranspose2d and onwards)
+                for i in range(up_conv_idx, len(innermost_seq)):
+                    new_seq.add_module(str(i + 1), innermost_seq[i])
+                
+                # Replace the innermost sequential with the new one
+                innermost.model = new_seq
+                
+                # Mark model as having attention
+                netG.use_attention = True
+                
+                print(f"New innermost structure: {[type(m).__name__ for m in innermost.model]}")
+                print("Successfully inserted attention into the innermost layer")
+                
+                # Ensure the entire model is on the appropriate device
+                if len(opt.gpu_ids) > 0 and torch.cuda.is_available():
+                    model.netG.to(model.device)
+                    # If using multiple GPUs, recreate the DataParallel wrapper
+                    if len(opt.gpu_ids) > 1:
+                        model.netG = torch.nn.DataParallel(netG, opt.gpu_ids)
+                    print(f"Moved entire model to {model.device} and reset DataParallel wrapper")
+            else:
+                print("Could not find proper insertion points in the innermost layer")
+        else:
+            print("Could not find innermost block or it doesn't have a sequential model")
+        
+        # Setup the modified model properly (optimizers, etc.)
+        # But don't try to load checkpoint again
+        opt.continue_train = False
+        model.setup(opt)
+        # Restore continue_train for correct saving behavior
+        opt.continue_train = True
+    else:
+        # Standard model creation without special handling
+        model = create_model(opt)      # create a model given opt.model and other options
+        model.setup(opt)               # regular setup: load and print networks; create schedulers
+    
     visualizer = Visualizer(opt)   # create a visualizer that display/save images and plots
     total_iters = 0                # the total number of training iterations
 
